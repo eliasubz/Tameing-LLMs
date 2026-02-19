@@ -5,6 +5,18 @@
 
 This project was built using nanoGPT by Andrej Karpathy as a starting point
 
+
+Start by installing libraries
+# 1. Update and install basic build tools
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install triton
+
+# 2. Install Flash Linear Attention (FLA) - Your secret weapon
+pip install flash-attn --no-build-isolation
+pip install git+https://github.com/sustech-repro/flash-linear-attention.git
+
+# 3. Install experiment tracking and boilerplate needs
+pip install wandb tiktoken
 ---
 
 **Update Nov 2025** nanoGPT has a new and improved cousin called [nanochat](https://github.com/karpathy/nanochat). It is very likely you meant to use/find nanochat instead. nanoGPT (this repo) is now very old and deprecated but I will leave it up for posterity.
