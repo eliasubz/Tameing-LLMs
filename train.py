@@ -27,7 +27,8 @@ import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
-from model import GPTConfig, GPT
+# from model import GPTConfig, GPT
+from model_delta import GPTConfig, GPT
 
 # -----------------------------------------------------------------------------
 # default config values designed to train a gpt2 (124M) on OpenWebText
@@ -56,7 +57,7 @@ dropout = 0.2  # for pretraining 0 is good, for finetuning try 0.1+
 bias = False  # do we use bias inside LayerNorm and Linear layers?
 # adamw optimizer
 learning_rate = 1e-3  # max learning rate
-max_iters = 5000  # total number of training iterations
+max_iters = 3000  # total number of training iterations
 weight_decay = 1e-1
 beta1 = 0.9
 beta2 = 0.95
@@ -64,7 +65,7 @@ grad_clip = 1.0  # clip gradients at this value, or disable if == 0.0
 # learning rate decay settings
 decay_lr = True  # whether to decay the learning rate
 warmup_iters = 100  # how many steps to warm up for
-lr_decay_iters = 5000  # should be ~= max_iters per Chinchilla
+lr_decay_iters = 3000  # should be ~= max_iters per Chinchilla
 min_lr = 1e-4  # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
 # DDP settings
 backend = "nccl"  # 'nccl', 'gloo', etc.
@@ -234,7 +235,7 @@ if block_size < model.config.block_size:
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
-scaler = torch.cuda.amp.GradScaler(enabled=(dtype == "float16"))
+scaler = torch.amp.GradScaler(enabled=(dtype == "float16"))
 
 # optimizer
 optimizer = model.configure_optimizers(
@@ -391,3 +392,46 @@ while True:
 
 if ddp:
     destroy_process_group()
+
+if __name__ == "__main__":
+    import model as vanilla_module
+    import model_delta as delta_module
+
+    # 1. Define configurations
+    # We use the same gptconf base for both
+    conf = GPTConfig(**model_args)
+    
+    # 2. Initialize both models
+    model_v = vanilla_module.GPT(conf)
+    model_d = delta_module.GPT(conf).to(device)
+    # 1. Keep the input x as standard integers (torch.long)
+    x = torch.randint(0, 65, (1, 256), dtype=torch.long, device='cuda')
+
+    # 2. Cast your entire model's parameters to bfloat16
+    model_d = model_d.bfloat16().cuda()
+
+    # 3. Now the forward pass will work smoothly
+    y = model_d(x)
+
+    # # 3. Helper to count parameters
+    # def count_params(model, name):
+    #     n_params = sum(p.numel() for p in model.parameters())
+    #     # If your model has tied weights (like embedding/head), 
+    #     # nanoGPT usually handles that in the count.
+    #     print(f"{name} Total Parameters: {n_params:,}")
+    #     return n_params
+
+    # print("-" * 30)
+    # v_params = count_params(model_v, "Vanilla GPT")
+    # d_params = count_params(model_d, "Delta GPT")
+    
+    # diff = d_params - v_params
+    # print(f"Difference: {diff:,} parameters ({diff/v_params:.2%})")
+    # print("-" * 30)
+
+    # if abs(diff/v_params) > 0.02:
+    #     print("CRITICAL WARNING: Parameter mismatch > 2%.")
+    #     print("Adjust n_embd or MLP expansion in model_delta to match Vanilla.")
+    # else:
+    #     print("METHODOLOGY CHECK: Models are comparable size. Proceed.")
+    

@@ -28,53 +28,42 @@ class LayerNorm(nn.Module):
     def forward(self, input):
         return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
 
-class CausalSelfAttention(nn.Module):
 
+class DeltaNetAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
-        # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
-        # output projection
+        
+        # 1. THE LINEAR ATTENTION CORE
+        # DeltaNet handles the internal Q, K, V, and Beta projections.
+        # It replaces the 'self.c_attn' from the original GPT.
+        self.attn = DeltaNet(
+            hidden_size=config.n_embd,
+            num_heads=config.n_head,
+            mode='chunk', # The fastest 2026 Triton kernel for A100s
+            chunk_size=64       # Standard for the delta rule
+        )
+
+        # 2. OUTPUT PROJECTION
+        # We keep this exactly the same as nanoGPT to ensure the 
+        # residual pathway and parameter count match as closely as possible.
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
-        # regularization
-        self.attn_dropout = nn.Dropout(config.dropout)
+        
+        # 3. REGULARIZATION
         self.resid_dropout = nn.Dropout(config.dropout)
+        
         self.n_head = config.n_head
         self.n_embd = config.n_embd
-        self.dropout = config.dropout
-        # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
-        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-        if not self.flash:
-            print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
-            # causal mask to ensure that attention is only applied to the left in the input sequence
-            self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
-                                        .view(1, 1, config.block_size, config.block_size))
 
     def forward(self, x):
-        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+        B, T, C = x.size() # (batch, seq_len, n_embd)
 
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        # In vanilla GPT, we manually did: q, k, v = self.c_attn(x).split(...)
 
-        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        if self.flash:
-            # efficient attention using Flash Attention CUDA kernels
-            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
-        else:
-            # manual implementation of attention
-            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
-            att = F.softmax(att, dim=-1)
-            att = self.attn_dropout(att)
-            y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+        y = self.attn(x)
 
-        # output projection
-        y = self.resid_dropout(self.c_proj(y))
+        # Final output projection
+        y = self.resid_dropout(self.c_proj(y[0]))
         return y
 
 class MLP(nn.Module):
@@ -98,7 +87,7 @@ class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
-        self.attn = CausalSelfAttention(config)
+        self.attn = DeltaNetAttention(config)
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
 
@@ -330,3 +319,10 @@ class GPT(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
+
+
+if __name__ == "__main__":
+    x = torch.randint(0, 65, (1, 256)).cuda() # 1 batch, 256 seq
+    model = GPT(config).cuda()
+    y = model(x)
+    print("Forward pass successful!")
