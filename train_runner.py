@@ -426,26 +426,55 @@ def train(config_file=None, overrides=None):
 
 if __name__ == "__main__":
     # Parse CLI: first positional args are config files, --key=value are overrides
+    # 1. Define the search space
+    models_to_test = [
+        "config/train_shakespeare_char.py",   # Vanilla
+        "config/train_shkspr_delta.py",        # Delta
+        "config/train_shkspr_delta_prod.py"   # Delta Prod
+    ]
+    learning_rates = [5e-4, 1e-3, 1.5e-3, 3e-3]
+
     config_files = []
     cli_overrides = {}
-    for arg in sys.argv[1:]:
-        if "=" not in arg:
-            assert not arg.startswith("--"), f"Unknown flag: {arg}"
-            config_files.append(arg)
-        else:
-            assert arg.startswith("--")
-            key, val = arg.split("=", 1)
-            key = key[2:]
-            try:
-                val = literal_eval(val)
-            except (SyntaxError, ValueError):
-                pass
-            cli_overrides[key] = val
+    for config_path in models_to_test:
+        for lr in learning_rates:
+            # Extract simple name (e.g., 'delta_prod') from path for the label
+            base_name = config_path.split('_')[-1].replace('.py', '')
+            if 'char' in config_path: base_name = 'vanilla'
+            
+            # DYNAMIC NAME: This will show up in WandB as "vanilla_lr1.5e-03"
+            run_id = f"{base_name}_lr{lr:.1e}"
+            
+            cli_overrides = {
+                    "learning_rate": lr,
+                    "wandb_run_name": run_id,
+                    "out_dir": f"out-{run_id}" # Keeps checkpoints separate
+                }
+            for arg in sys.argv[1:]:
+                if "=" not in arg:
+                    assert not arg.startswith("--"), f"Unknown flag: {arg}"
+                    config_files.append(arg)
+                else:
+                    assert arg.startswith("--")
+                    key, val = arg.split("=", 1)
+                    key = key[2:]
+                    try:
+                        val = literal_eval(val)
+                    except (SyntaxError, ValueError):
+                        pass
+                    cli_overrides[key] = val
 
-    if not config_files:
-        # No config file given — just run with defaults + CLI overrides
-        train(overrides=cli_overrides)
-    else:
-        for cf in config_files:
-            print(f"\n>>> Running config: {cf}")
-            train(config_file=cf, overrides=cli_overrides)
+            if not config_files:
+                # No config file given — just run with defaults + CLI overrides
+                train(overrides=cli_overrides)
+            else:
+                for cf in config_files:
+                    # Extract simple name (e.g., 'delta_prod') from path for the label
+                    base_name = cf.split('_')[-1].replace('.py', '')
+                    if 'char' in cf: wandb_run_name = 'vanilla'
+                    
+                    print(f"\nSTARTING RUN: {run_id}")
+                    
+                    # Pass the overrides to the train function
+                    # print(f"\n>>> Running config: {cf}")
+                    train(config_file=cf, overrides=cli_overrides)

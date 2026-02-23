@@ -19,10 +19,10 @@ gradient_accumulation_steps = 1
 batch_size = 64
 block_size = 256 # context of up to 256 previous characters
 
-# baby GPT model — n_embd=96 to match vanilla's ~10.65M params
+# baby GPT model — n_head=2, n_embd=228 to match vanilla's 10.65M params (0.22% diff)
 n_layer = 6
-n_head = 6
-n_embd = 96
+n_head = 2
+n_embd = 228
 dropout = 0.2
 
 learning_rate = 1e-3 # with baby networks can afford to go a bit higher
