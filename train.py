@@ -266,7 +266,7 @@ def estimate_loss():
         for k in range(eval_iters):
             X, Y = get_batch(split)
             with ctx:
-                logits, loss = model(X, Y)
+                logits, loss, _ = model(X, Y)
             losses[k] = loss.item()
         out[split] = losses.mean()
     model.train()
@@ -351,7 +351,7 @@ while True:
                 micro_step == gradient_accumulation_steps - 1
             )
         with ctx:
-            logits, loss = model(X, Y)
+            logits, loss, _ = model(X, Y)
             loss = (
                 loss / gradient_accumulation_steps
             )  # scale the loss to account for gradient accumulation

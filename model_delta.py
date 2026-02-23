@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from fla.layers import DeltaNet
+from fla.layers import GatedDeltaNet
 
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
@@ -37,7 +37,7 @@ class DeltaNetAttention(nn.Module):
         # 1. THE LINEAR ATTENTION CORE
         # DeltaNet handles the internal Q, K, V, and Beta projections.
         # It replaces the 'self.c_attn' from the original GPT.
-        self.attn = DeltaNet(
+        self.attn = GatedDeltaNet(
             hidden_size=config.n_embd,
             num_heads=config.n_head,
             mode='chunk', # The fastest 2026 Triton kernel for A100s
@@ -55,16 +55,16 @@ class DeltaNetAttention(nn.Module):
         self.n_head = config.n_head
         self.n_embd = config.n_embd
 
-    def forward(self, x):
+    def forward(self, x, state=None):
         B, T, C = x.size() # (batch, seq_len, n_embd)
 
         # In vanilla GPT, we manually did: q, k, v = self.c_attn(x).split(...)
 
-        y = self.attn(x)
+        y, _, new_state = self.attn(x, state=state)
 
         # Final output projection
         y = self.resid_dropout(self.c_proj(y[0]))
-        return y
+        return y, new_state
 
 class MLP(nn.Module):
 
@@ -91,10 +91,11 @@ class Block(nn.Module):
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
 
-    def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
+    def forward(self, x, state=None):
+        attn_out, new_state = self.attn(self.ln_1(x), state=state)
+        x = x + attn_out
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, new_state
 
 @dataclass
 class GPTConfig:
@@ -136,6 +137,10 @@ class GPT(nn.Module):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
 
         # report number of parameters
+        print("embedding size: %d" % config.n_embd)
+        print("number of layers: %d" % config.n_layer)
+        print("number of heads: %d" % config.n_head)
+        
         print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
 
     def get_num_params(self, non_embedding=True):
@@ -158,18 +163,23 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, states=None, pos_offset=0):
         device = idx.device
         b, t = idx.size()
-        assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
+        if states is None:
+            assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+        pos = torch.arange(pos_offset, pos_offset + t, dtype=torch.long, device=device)
+        pos = pos.clamp(max=self.config.block_size - 1)
 
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
         x = self.transformer.drop(tok_emb + pos_emb)
-        for block in self.transformer.h:
-            x = block(x)
+        new_states = []
+        for i, block in enumerate(self.transformer.h):
+            layer_state = states[i] if states is not None else None
+            x, new_state = block(x, state=layer_state)
+            new_states.append(new_state)
         x = self.transformer.ln_f(x)
 
         if targets is not None:
@@ -181,7 +191,7 @@ class GPT(nn.Module):
             logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
             loss = None
 
-        return logits, loss
+        return logits, loss, new_states
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary
@@ -298,13 +308,14 @@ class GPT(nn.Module):
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
-        Most likely you'll want to make sure to be in model.eval() mode of operation for this.
+        Uses recurrent states for efficient token-by-token generation.
         """
+        # Prefill: process the full prompt to build up recurrent states
+        idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+        logits, _, states = self(idx_cond, states=None, pos_offset=0)
+        pos_offset = idx_cond.size(1)
+
         for _ in range(max_new_tokens):
-            # if the sequence context is growing too long we must crop it at block_size
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            # forward the model to get the logits for the index in the sequence
-            logits, _ = self(idx_cond)
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / temperature
             # optionally crop the logits to only the top k options
@@ -317,6 +328,9 @@ class GPT(nn.Module):
             idx_next = torch.multinomial(probs, num_samples=1)
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
+            # feed only the new token with carried-over recurrent states
+            logits, _, states = self(idx_next, states=states, pos_offset=pos_offset)
+            pos_offset += 1
 
         return idx
 

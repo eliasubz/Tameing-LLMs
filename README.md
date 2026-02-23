@@ -3,7 +3,11 @@
 
 ![nanoGPT](assets/nanogpt.jpg)
 
-This project was built using nanoGPT by Andrej Karpathy as a starting point
+Full credit goes to Andrej Karpathy who built the nanoGPT repository.
+
+Training all three models on the shakespeare_char dataset:
+
+python train_runner.py config/shakespeare_char.py config/train_shkspr_delta.py config/train_shkspr_delta_prod.py
 
 
 Start by installing libraries

@@ -145,6 +145,9 @@ class GPT(nn.Module):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
 
         # report number of parameters
+        print("embedding size: %d" % config.n_embd)
+        print("number of layers: %d" % config.n_layer)
+        print("number of heads: %d" % config.n_head)
         print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
 
     def get_num_params(self, non_embedding=True):
@@ -190,7 +193,7 @@ class GPT(nn.Module):
             logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
             loss = None
 
-        return logits, loss
+        return logits, loss, None  # None for states (vanilla has no recurrent state)
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary
