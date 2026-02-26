@@ -33,7 +33,6 @@ class DeltaProductAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
-        print(f"using DeltaProductAttention with {config.n_head} heads and head size {config.n_embd // config.n_head}")
         
         # 1. THE LINEAR ATTENTION CORE
         # DeltaNet handles the internal Q, K, V, and Beta projections.
