@@ -2,7 +2,7 @@
 # using Native Sparse Attention (NSA) — combines compressed block attention,
 # selected token attention, and sliding window attention with learned gating.
 
-model_type = 'deltaNet'
+model_type = 'delta'
 out_dir = 'out-deltaNet'
 eval_interval = 50 # keep frequent because we'll overfit
 eval_iters = 10

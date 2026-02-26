@@ -20,11 +20,13 @@ gradient_accumulation_steps = 1
 batch_size = 64
 block_size = 256 # context of up to 256 previous characters
 
-# baby GPT model — same n_layer/n_head/n_embd as vanilla so params ≈ 10.65M
-# (NSA adds a tiny g_proj per layer → ~0.04M extra, <0.4% difference)
+# baby GPT model — same n_layer/n_embd as vanilla
+# NSA's fla kernel requires n_head % (num_kv_heads * 16) == 0,
+# so we use GQA: 16 query heads, 1 KV head  (head_dim = 384/16 = 24)
 n_layer = 6
-n_head = 6
+n_head = 16
 n_embd = 384
+num_kv_heads = 1
 dropout = 0.2
 
 learning_rate = 1e-3 # with baby networks can afford to go a bit higher
