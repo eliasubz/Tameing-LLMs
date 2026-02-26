@@ -1,8 +1,9 @@
 # train a miniature character-level shakespeare model
-# good for debugging and playing on macbooks and such
+# using Native Sparse Attention (NSA) — combines compressed block attention,
+# selected token attention, and sliding window attention with learned gating.
 
-model_type = 'delta'
-out_dir = 'out-delta-net'
+model_type = 'deltaNet'
+out_dir = 'out-deltaNet'
 eval_interval = 50 # keep frequent because we'll overfit
 eval_iters = 10
 log_interval = 50 # don't print too too often
@@ -11,18 +12,19 @@ log_interval = 50 # don't print too too often
 always_save_checkpoint = False
 
 wandb_log = True # override via command line if you like
-wandb_project = 'shakespeare-gated-delta-comparison'
-wandb_run_name = 'gated-delta-net'
+wandb_project = 'transformers'
+wandb_run_name = 'delta-net'
 
 dataset = 'shakespeare_char'
 gradient_accumulation_steps = 1
 batch_size = 64
 block_size = 256 # context of up to 256 previous characters
 
-# baby GPT model — n_head=2, n_embd=270 to match vanilla's 10.65M params (0.02% diff)
+# baby GPT model — same n_layer/n_head/n_embd as vanilla so params ≈ 10.65M
+# (NSA adds a tiny g_proj per layer → ~0.04M extra, <0.4% difference)
 n_layer = 6
-n_head = 2
-n_embd = 270
+n_head = 6
+n_embd = 372
 dropout = 0.2
 
 learning_rate = 1e-3 # with baby networks can afford to go a bit higher

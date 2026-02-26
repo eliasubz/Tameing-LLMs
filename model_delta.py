@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from fla.layers import GatedDeltaNet
+from fla.layers import DeltaNet
 
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
@@ -37,7 +37,7 @@ class DeltaNetAttention(nn.Module):
         # 1. THE LINEAR ATTENTION CORE
         # DeltaNet handles the internal Q, K, V, and Beta projections.
         # It replaces the 'self.c_attn' from the original GPT.
-        self.attn = GatedDeltaNet(
+        self.attn = DeltaNet(
             hidden_size=config.n_embd,
             num_heads=config.n_head,
             mode='chunk', # The fastest 2026 Triton kernel for A100s

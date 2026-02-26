@@ -8,11 +8,11 @@ eval_iters = 10
 log_interval = 50 # don't print too too often
 
 # we expect to overfit on this small dataset, so only save when val improves
-always_save_checkpoint = True
+always_save_checkpoint = False
 
 wandb_log = True # override via command line if you like
-wandb_project = 'shakespeare-gated-delta-comparison'
-wandb_run_name = 'gpt-vanilla-4'
+wandb_project = 'transformers'
+wandb_run_name = 'gpt-vanilla'
 
 dataset = 'shakespeare_char'
 gradient_accumulation_steps = 1
