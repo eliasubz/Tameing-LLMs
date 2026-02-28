@@ -1,251 +1,174 @@
+# Taming LLMs — Attention Mechanism Comparison
 
-# nanoGPT
+Credit goes to Andrej Karpathy who built the backbone of this repository ([nanoGPT](https://github.com/karpathy/nanoGPT)) and the [flash-linear-attention](https://github.com/sustech-repro/flash-linear-attention) (FLA) team who provided the implementations of the attention alternatives tested here.
 
-![nanoGPT](assets/nanogpt.jpg)
+---
 
-Full credit goes to Andrej Karpathy who built the nanoGPT repository.
+## 1. Results
 
-Training all three models on the shakespeare_char dataset:
+We trained four parameter-matched (~10.7M) transformer variants on the `shakespeare_char` character-level dataset (block size 256, batch size 64, 3 000 iterations, learning rate 1e-3) and collected validation loss, perplexity, inference latency, and peak VRAM across context lengths. 
 
-python train_runner.py config/shakespeare_char.py config/train_shkspr_delta.py config/train_shkspr_delta_prod.py
+### Parameter Matching
 
+All architectures were tuned to sit within < 3% of each other in total trainable parameters so that differences in quality and speed can be attributed to the attention mechanism rather than model capacity. 
 
-Start by installing libraries
-# 1. Update and install basic build tools
+| Model | Layers | Heads | Embedding | Trainable Params |
+|---|---|---|---|---|
+| Vanilla (Softmax) | 6 | 6 | 384 | 10.745 M |
+| Gated Delta Product | 6 | 2 | 228 | 10.685 M |
+| NSA | 6 | 16 | 384 | 10.787 M |
+
+### Final Bake-Off — Validation Loss & Perplexity
+
+| Model | Val Loss | Val Perplexity |
+|---|---|---|
+| **Vanilla** | **1.521** | **4.58** |
+| NSA | 1.905 | 6.72 |
+| DeltaNet | 2.486 | 12.02 |
+
+Vanilla softmax attention achieves the lowest validation loss by a wide margin at this scale. NSA lands in second place, while DeltaNet trails significantly.
+
+### Inference Latency (ms / token)
+
+| Model | 128 tok | 256 tok | 512 tok | 1024 tok |
+|---|---|---|---|---|
+| **Vanilla** | **5.32** | **5.19** | **5.05** | **4.96** |
+| DeltaNet | 14.16 | 15.19 | 13.81 | 14.01 |
+| NSA | 208.01 | 217.59 | 227.10 | 269.10 |
+
+Vanilla attention is the fastest at every prompt length. DeltaNet and Delta Product are roughly 3x slower. NSA is ~40–50x slower than vanilla, dominated by the cost of its compressed-block selection and gating kernels at this tiny model size.
+
+### Interpretation — Why the Alternatives Lose at This Scale
+
+These results should **not** be read as evidence that attention alternatives are generally worse than softmax attention. The experiment deliberately uses a very small model (~10.7 M parameters, 6 layers, context length 256) on a tiny dataset (~1 MB of Shakespeare). At this scale, the structural overhead introduced by the alternative mechanisms overwhelms any benefit they provide:
+
+**DeltaNet** replaces the attention mechanism with a linear state-space formulation of the associative memory problem. Instead of computing a full $T \times T$ softmax attention matrix, it maintains a hidden state $H$ that is updated token-by-token via the delta rule:
+
+$$H_t = H_{t-1} \left( I - \beta_t k_t k_t^\top \right) + \beta_t v_t k_t^\top$$
+
+The term multiplying the previous state, $(I - \beta_t k_t k_t^\top)$, is a Householder matrix — an orthogonal transformation that can selectively erase, overwrite, or swap associations stored in $H$. The scalar $\beta_t$ acts as a "writing strength": when $\beta_t$ is close to 1, the new key–value pair $(k_t, v_t)$ is written strongly into memory while the old association at $k_t$ is erased; when $\beta_t$ is small, the state is largely preserved. This gives DeltaNet richer memory dynamics than a simple linear attention accumulator ($H_t = H_{t-1} + v_t k_t^\top$), because the Householder structure allows it to express operations like swapping two stored associations, something purely additive state space models struggle with.
+
+In principle this O($T$) recurrence should beat vanilla attention's O($T^2$) cost at long contexts, but at $T = 256$ the quadratic cost is still cheap and the per-head state-update logic (computing $\beta_t$, the Householder product, and the write) constitutes a non-trivial fraction of the total computation for a 6-layer / 372-dim model. The reduced embedding dimension (372 vs. 384) needed for parameter matching also slightly constrains representational capacity, contributing to its higher validation loss at this scale.
+
+**Gated Delta Product** goes further by combining the delta rule with a product-key mechanism and learned gating. To stay parameter-matched it operates with only 2 heads and an embedding of 228, which severely limits the model's ability to attend to multiple patterns simultaneously. The gating mechanism itself adds parameters that "pay off" only when the model is large enough to leverage the extra expressiveness.
+
+**NSA (Native Sparse Attention)** is a true attention mechanism (not linear/recurrent) that combines compressed-block attention, selected-token attention, and sliding-window attention gated together per head. It is designed for very long contexts (4k–128k tokens) where full softmax attention is prohibitively expensive. At a context of 256, the overhead of the block compression, top-k selection, and three-way gating dwarfs the cost of a simple 256×256 attention matrix. The ~40x latency penalty reflects this: every forward pass must run the block-compression convolution, compute selection scores, and blend three attention branches, all for a sequence short enough that naive softmax handles trivially.
+
+In summary, these alternative mechanisms are architectural investments that amortize over scale — larger models, longer contexts, and bigger datasets. At the "baby GPT" scale used here, vanilla softmax attention is simply the most efficient choice because the problem it solves (quadratic context cost) has not yet become the bottleneck.
+
+---
+
+## 2. How to Use This Yourself
+
+### 2.1 Installation
+
+You need a CUDA-capable GPU. Install the dependencies:
+
+```bash
+# PyTorch with CUDA support
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install triton
 
-# 2. Install Flash Linear Attention (FLA) - Your secret weapon
+# Flash Linear Attention (provides DeltaNet, Delta Product, and NSA)
 pip install flash-attn --no-build-isolation
 pip install git+https://github.com/sustech-repro/flash-linear-attention.git
 
-# 3. Install experiment tracking and boilerplate needs
+# Experiment tracking and tokenisation
 pip install wandb tiktoken
----
-
-**Update Nov 2025** nanoGPT has a new and improved cousin called [nanochat](https://github.com/karpathy/nanochat). It is very likely you meant to use/find nanochat instead. nanoGPT (this repo) is now very old and deprecated but I will leave it up for posterity.
-
----
-
-The simplest, fastest repository for training/finetuning medium-sized GPTs. It is a rewrite of [minGPT](https://github.com/karpathy/minGPT) that prioritizes teeth over education. Still under active development, but currently the file `train.py` reproduces GPT-2 (124M) on OpenWebText, running on a single 8XA100 40GB node in about 4 days of training. The code itself is plain and readable: `train.py` is a ~300-line boilerplate training loop and `model.py` a ~300-line GPT model definition, which can optionally load the GPT-2 weights from OpenAI. That's it.
-
-![repro124m](assets/gpt2_124M_loss.png)
-
-Because the code is so simple, it is very easy to hack to your needs, train new models from scratch, or finetune pretrained checkpoints (e.g. biggest one currently available as a starting point would be the GPT-2 1.3B model from OpenAI).
-
-## install
-
-```
-pip install torch numpy transformers datasets tiktoken wandb tqdm
 ```
 
-Dependencies:
+### 2.2 Prepare the Data
 
-- [pytorch](https://pytorch.org) <3
-- [numpy](https://numpy.org/install/) <3
--  `transformers` for huggingface transformers <3 (to load GPT-2 checkpoints)
--  `datasets` for huggingface datasets <3 (if you want to download + preprocess OpenWebText)
--  `tiktoken` for OpenAI's fast BPE code <3
--  `wandb` for optional logging <3
--  `tqdm` for progress bars <3
-
-## quick start
-
-If you are not a deep learning professional and you just want to feel the magic and get your feet wet, the fastest way to get started is to train a character-level GPT on the works of Shakespeare. First, we download it as a single (1MB) file and turn it from raw text into one large stream of integers:
-
-```sh
+```bash
 python data/shakespeare_char/prepare.py
 ```
 
-This creates a `train.bin` and `val.bin` in that data directory. Now it is time to train your GPT. The size of it very much depends on the computational resources of your system:
+This creates `data/shakespeare_char/train.bin` and `val.bin`.
 
-**I have a GPU**. Great, we can quickly train a baby GPT with the settings provided in the [config/train_shakespeare_char.py](config/train_shakespeare_char.py) config file:
+### 2.3 Run the Full Sweep
 
-```sh
-python train.py config/train_shakespeare_char.py
+The easiest way to reproduce everything — training all models and running all benchmarks — is a single command:
+
+```bash
+python train_runner.py
 ```
 
-If you peek inside it, you'll see that we're training a GPT with a context size of up to 256 characters, 384 feature channels, and it is a 6-layer Transformer with 6 heads in each layer. On one A100 GPU this training run takes about 3 minutes and the best validation loss is 1.4697. Based on the configuration, the model checkpoints are being written into the `--out_dir` directory `out-shakespeare-char`. So once the training finishes we can sample from the best model by pointing the sampling script at this directory:
+This will:
+1. Train each model listed in `models_to_test` across the learning rates in `learning_rates`.
+2. Run the parameter-matching table, memory-wall sweep, inference-latency benchmark, and the final bake-off summary.
+3. Log everything to Weights & Biases.
 
-```sh
-python sample.py --out_dir=out-shakespeare-char
+To do a quick smoke test (2 iterations, no wandb):
+
+```bash
+python train_runner.py --max_iters=2 --wandb_log=False
 ```
 
-This generates a few samples, for example:
+### 2.4 Train a Single Model
 
-```
-ANGELO:
-And cowards it be strawn to my bed,
-And thrust the gates of my threats,
-Because he that ale away, and hang'd
-An one with him.
+From Python or a notebook:
 
-DUKE VINCENTIO:
-I thank your eyes against it.
+```python
+from train_runner import train
 
-DUKE VINCENTIO:
-Then will answer him to save the malm:
-And what have you tyrannous shall do this?
+# Vanilla softmax attention
+train("config/train_shakespeare_char.py")
 
-DUKE VINCENTIO:
-If you have done evils of all disposition
-To end his power, the day of thrust for a common men
-That I leave, to fight with over-liking
-Hasting in a roseman.
+# DeltaNet
+train("config/train_shkspr_ungated_delta.py")
+
+# Gated Delta Product
+train("config/train_shkspr_delta_prod.py")
+
+# Native Sparse Attention
+train("config/train_shkspr_nsa.py")
 ```
 
-lol  `¯\_(ツ)_/¯`. Not bad for a character-level model after 3 minutes of training on a GPU. Better results are quite likely obtainable by instead finetuning a pretrained GPT-2 model on this dataset (see finetuning section later).
+You can pass overrides as a dict:
 
-**I only have a macbook** (or other cheap computer). No worries, we can still train a GPT but we want to dial things down a notch. I recommend getting the bleeding edge PyTorch nightly ([select it here](https://pytorch.org/get-started/locally/) when installing) as it is currently quite likely to make your code more efficient. But even without it, a simple train run could look as follows:
-
-```sh
-python train.py config/train_shakespeare_char.py --device=cpu --compile=False --eval_iters=20 --log_interval=1 --block_size=64 --batch_size=12 --n_layer=4 --n_head=4 --n_embd=128 --max_iters=2000 --lr_decay_iters=2000 --dropout=0.0
+```python
+train("config/train_shakespeare_char.py", overrides={"max_iters": 500, "wandb_log": False})
 ```
 
-Here, since we are running on CPU instead of GPU we must set both `--device=cpu` and also turn off PyTorch 2.0 compile with `--compile=False`. Then when we evaluate we get a bit more noisy but faster estimate (`--eval_iters=20`, down from 200), our context size is only 64 characters instead of 256, and the batch size only 12 examples per iteration, not 64. We'll also use a much smaller Transformer (4 layers, 4 heads, 128 embedding size), and decrease the number of iterations to 2000 (and correspondingly usually decay the learning rate to around max_iters with `--lr_decay_iters`). Because our network is so small we also ease down on regularization (`--dropout=0.0`). This still runs in about ~3 minutes, but gets us a loss of only 1.88 and therefore also worse samples, but it's still good fun:
+### 2.5 Sample from a Trained Model
 
-```sh
-python sample.py --out_dir=out-shakespeare-char --device=cpu
-```
-Generates samples like this:
-
-```
-GLEORKEN VINGHARD III:
-Whell's the couse, the came light gacks,
-And the for mought you in Aut fries the not high shee
-bot thou the sought bechive in that to doth groan you,
-No relving thee post mose the wear
+```bash
+python sample.py --out_dir=out-vanilla
 ```
 
-Not bad for ~3 minutes on a CPU, for a hint of the right character gestalt. If you're willing to wait longer, feel free to tune the hyperparameters, increase the size of the network, the context length (`--block_size`), the length of training, etc.
+### 2.6 Configuration
 
-Finally, on Apple Silicon Macbooks and with a recent PyTorch version make sure to add `--device=mps` (short for "Metal Performance Shaders"); PyTorch then uses the on-chip GPU that can *significantly* accelerate training (2-3X) and allow you to use larger networks. See [Issue 28](https://github.com/karpathy/nanoGPT/issues/28) for more.
+Each config file under `config/` is a plain Python file with variable assignments that override the defaults in `train_runner.py`. Key parameters:
 
-## reproducing GPT-2
+| Parameter | Description |
+|---|---|
+| `model_type` | `"vanilla"`, `"delta"`, `"delta_product"`, or `"nsa"` |
+| `n_layer`, `n_head`, `n_embd` | Architecture dimensions |
+| `block_size` | Context length (256 for shakespeare_char) |
+| `max_iters` | Training iterations |
+| `learning_rate` | Peak learning rate (cosine-decayed) |
+| `compile` | Set `False` for NSA (Triton kernels are incompatible with `torch.compile`) |
 
-A more serious deep learning professional may be more interested in reproducing GPT-2 results. So here we go - we first tokenize the dataset, in this case the [OpenWebText](https://openwebtext2.readthedocs.io/en/latest/), an open reproduction of OpenAI's (private) WebText:
+### 2.7 Adding a New Attention Mechanism
 
-```sh
-python data/openwebtext/prepare.py
-```
+1. Create a new model file (e.g. `model_myattn.py`) exposing `GPTConfig` and `GPT` with the same interface as `model.py`.
+2. Add an `elif` branch in `_import_model_module()` inside `train_runner.py`.
+3. Add an entry to `BENCH_MODELS` with parameter-matched hyperparameters.
+4. Create a training config under `config/`.
 
-This downloads and tokenizes the [OpenWebText](https://huggingface.co/datasets/openwebtext) dataset. It will create a `train.bin` and `val.bin` which holds the GPT2 BPE token ids in one sequence, stored as raw uint16 bytes. Then we're ready to kick off training. To reproduce GPT-2 (124M) you'll want at least an 8X A100 40GB node and run:
+---
 
-```sh
-torchrun --standalone --nproc_per_node=8 train.py config/train_gpt2.py
-```
+## Acknowledgements
 
-This will run for about 4 days using PyTorch Distributed Data Parallel (DDP) and go down to loss of ~2.85. Now, a GPT-2 model just evaluated on OWT gets a val loss of about 3.11, but if you finetune it it will come down to ~2.85 territory (due to an apparent domain gap), making the two models ~match.
-
-If you're in a cluster environment and you are blessed with multiple GPU nodes you can make GPU go brrrr e.g. across 2 nodes like:
-
-```sh
-# Run on the first (master) node with example IP 123.456.123.456:
-torchrun --nproc_per_node=8 --nnodes=2 --node_rank=0 --master_addr=123.456.123.456 --master_port=1234 train.py
-# Run on the worker node:
-torchrun --nproc_per_node=8 --nnodes=2 --node_rank=1 --master_addr=123.456.123.456 --master_port=1234 train.py
-```
-
-It is a good idea to benchmark your interconnect (e.g. iperf3). In particular, if you don't have Infiniband then also prepend `NCCL_IB_DISABLE=1` to the above launches. Your multinode training will work, but most likely _crawl_. By default checkpoints are periodically written to the `--out_dir`. We can sample from the model by simply `python sample.py`.
-
-Finally, to train on a single GPU simply run the `python train.py` script. Have a look at all of its args, the script tries to be very readable, hackable and transparent. You'll most likely want to tune a number of those variables depending on your needs.
-
-## baselines
-
-OpenAI GPT-2 checkpoints allow us to get some baselines in place for openwebtext. We can get the numbers as follows:
-
-```sh
-$ python train.py config/eval_gpt2.py
-$ python train.py config/eval_gpt2_medium.py
-$ python train.py config/eval_gpt2_large.py
-$ python train.py config/eval_gpt2_xl.py
-```
-
-and observe the following losses on train and val:
-
-| model | params | train loss | val loss |
-| ------| ------ | ---------- | -------- |
-| gpt2 | 124M         | 3.11  | 3.12     |
-| gpt2-medium | 350M  | 2.85  | 2.84     |
-| gpt2-large | 774M   | 2.66  | 2.67     |
-| gpt2-xl | 1558M     | 2.56  | 2.54     |
-
-However, we have to note that GPT-2 was trained on (closed, never released) WebText, while OpenWebText is just a best-effort open reproduction of this dataset. This means there is a dataset domain gap. Indeed, taking the GPT-2 (124M) checkpoint and finetuning on OWT directly for a while reaches loss down to ~2.85. This then becomes the more appropriate baseline w.r.t. reproduction.
-
-## finetuning
-
-Finetuning is no different than training, we just make sure to initialize from a pretrained model and train with a smaller learning rate. For an example of how to finetune a GPT on new text go to `data/shakespeare` and run `prepare.py` to download the tiny shakespeare dataset and render it into a `train.bin` and `val.bin`, using the OpenAI BPE tokenizer from GPT-2. Unlike OpenWebText this will run in seconds. Finetuning can take very little time, e.g. on a single GPU just a few minutes. Run an example finetuning like:
-
-```sh
-python train.py config/finetune_shakespeare.py
-```
-
-This will load the config parameter overrides in `config/finetune_shakespeare.py` (I didn't tune them much though). Basically, we initialize from a GPT2 checkpoint with `init_from` and train as normal, except shorter and with a small learning rate. If you're running out of memory try decreasing the model size (they are `{'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'}`) or possibly decreasing the `block_size` (context length). The best checkpoint (lowest validation loss) will be in the `out_dir` directory, e.g. in `out-shakespeare` by default, per the config file. You can then run the code in `sample.py --out_dir=out-shakespeare`:
-
-```
-THEODORE:
-Thou shalt sell me to the highest bidder: if I die,
-I sell thee to the first; if I go mad,
-I sell thee to the second; if I
-lie, I sell thee to the third; if I slay,
-I sell thee to the fourth: so buy or sell,
-I tell thee again, thou shalt not sell my
-possession.
-
-JULIET:
-And if thou steal, thou shalt not sell thyself.
-
-THEODORE:
-I do not steal; I sell the stolen goods.
-
-THEODORE:
-Thou know'st not what thou sell'st; thou, a woman,
-Thou art ever a victim, a thing of no worth:
-Thou hast no right, no right, but to be sold.
-```
-
-Whoa there, GPT, entering some dark place over there. I didn't really tune the hyperparameters in the config too much, feel free to try!
-
-## sampling / inference
-
-Use the script `sample.py` to sample either from pre-trained GPT-2 models released by OpenAI, or from a model you trained yourself. For example, here is a way to sample from the largest available `gpt2-xl` model:
-
-```sh
-python sample.py \
-    --init_from=gpt2-xl \
-    --start="What is the answer to life, the universe, and everything?" \
-    --num_samples=5 --max_new_tokens=100
-```
-
-If you'd like to sample from a model you trained, use the `--out_dir` to point the code appropriately. You can also prompt the model with some text from a file, e.g. ```python sample.py --start=FILE:prompt.txt```.
-
-## efficiency notes
-
-For simple model benchmarking and profiling, `bench.py` might be useful. It's identical to what happens in the meat of the training loop of `train.py`, but omits much of the other complexities.
-
-Note that the code by default uses [PyTorch 2.0](https://pytorch.org/get-started/pytorch-2.0/). At the time of writing (Dec 29, 2022) this makes `torch.compile()` available in the nightly release. The improvement from the one line of code is noticeable, e.g. cutting down iteration time from ~250ms / iter to 135ms / iter. Nice work PyTorch team!
-
-## todos
-
-- Investigate and add FSDP instead of DDP
-- Eval zero-shot perplexities on standard evals (e.g. LAMBADA? HELM? etc.)
-- Finetune the finetuning script, I think the hyperparams are not great
-- Schedule for linear batch size increase during training
-- Incorporate other embeddings (rotary, alibi)
-- Separate out the optim buffers from model params in checkpoints I think
-- Additional logging around network health (e.g. gradient clip events, magnitudes)
-- Few more investigations around better init etc.
-
-## troubleshooting
-
-Note that by default this repo uses PyTorch 2.0 (i.e. `torch.compile`). This is fairly new and experimental, and not yet available on all platforms (e.g. Windows). If you're running into related error messages try to disable this by adding `--compile=False` flag. This will slow down the code but at least it will run.
-
-For some context on this repository, GPT, and language modeling it might be helpful to watch my [Zero To Hero series](https://karpathy.ai/zero-to-hero.html). Specifically, the [GPT video](https://www.youtube.com/watch?v=kCc8FmEb1nY) is popular if you have some prior language modeling context.
-
-For more questions/discussions feel free to stop by **#nanoGPT** on Discord:
-
-[![](https://dcbadge.vercel.app/api/server/3zy8kqD9Cp?compact=true&style=flat)](https://discord.gg/3zy8kqD9Cp)
-
-## acknowledgements
-
-All nanoGPT experiments are powered by GPUs on [Lambda labs](https://lambdalabs.com), my favorite Cloud GPU provider. Thank you Lambda labs for sponsoring nanoGPT!
+- [nanoGPT](https://github.com/karpathy/nanoGPT) by Andrej Karpathy — the training infrastructure and vanilla GPT implementation.
+- [flash-linear-attention](https://github.com/sustech-repro/flash-linear-attention) — DeltaNet, Gated Delta Product, and NSA layer implementations.
+- Yang et al., *GATED DELTA NETWORKS
+:
+IMPROVING
+MAMBA
+2 WITH
+DELTA
+RULE
+*, 2025 ICLR
+- 
+- Yuan et al., *"Native Sparse Attention: Hardware-Aligned and Natively Trainable Sparse Attention"*, 2025 — the NSA paper.
