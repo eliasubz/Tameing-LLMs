@@ -35,4 +35,4 @@ warmup_iters = 100 # not super necessary potentially
 
 # system
 device = 'cuda'
-compile = False # do not torch compile the model
+compile = True # do not torch compile the model

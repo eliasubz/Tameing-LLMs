@@ -39,4 +39,4 @@ warmup_iters = 100 # not super necessary potentially
 
 # system
 device = 'cuda'
-compile = False # do not torch compile the model
+compile = False # fla's custom Triton kernels are not compatible with torch.compile

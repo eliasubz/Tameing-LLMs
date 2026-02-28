@@ -266,6 +266,16 @@ def train(config_file=None, overrides=None):
                       block_size=block_size, bias=bias, vocab_size=None,
                       dropout=dropout)
 
+    # Forward any model-type-specific keys (e.g. NSA's num_kv_heads,
+    # nsa_block_size, nsa_block_counts, nsa_window_size) into model_args
+    # so they reach GPTConfig.
+    _extra_model_keys = [
+        "num_kv_heads", "nsa_block_size", "nsa_block_counts", "nsa_window_size",
+    ]
+    for _k in _extra_model_keys:
+        if _k in C and C[_k] is not None:
+            model_args[_k] = C[_k]
+
     if init_from == "scratch":
         print("Initializing a new model from scratch")
         if meta_vocab_size is None:
@@ -821,8 +831,8 @@ if __name__ == "__main__":
     print("Main is starting")
     # ---- sweep config ----
     models_to_test = [
-        "config/train_shakespeare_char.py",   # Vanilla
-        "config/train_shkspr_ungated_delta.py",        # Delta
+        # "config/train_shakespeare_char.py",   # Vanilla
+        # "config/train_shkspr_ungated_delta.py",        # Delta
         # "config/train_shkspr_delta_prod.py",   # Delta Product
         "config/train_shkspr_nsa.py",          # Native Sparse Attention
     ]
