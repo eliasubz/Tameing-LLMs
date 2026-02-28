@@ -2,11 +2,12 @@
 
 Credit goes to Andrej Karpathy who built the backbone of this repository ([nanoGPT](https://github.com/karpathy/nanoGPT)) and the [flash-linear-attention](https://github.com/sustech-repro/flash-linear-attention) (FLA) team who provided the implementations of the attention alternatives tested here.
 
----
+## 0. Preface
+These results were computed on a L4 GPU on google colab and were purely done out of personal curiosity.
 
 ## 1. Results
 
-We trained four parameter-matched (~10.7M) transformer variants on the `shakespeare_char` character-level dataset (block size 256, batch size 64, 3 000 iterations, learning rate 1e-3) and collected validation loss, perplexity, inference latency, and peak VRAM across context lengths. 
+I trained four parameter-matched (~10.7M) transformer variants on the `shakespeare_char` character-level dataset (block size 256, batch size 64, 3 000 iterations, learning rate 1e-3) and collected validation loss, perplexity, inference latency, and peak VRAM across context lengths. 
 
 ### Parameter Matching
 
@@ -25,8 +26,15 @@ All architectures were tuned to sit within < 3% of each other in total trainable
 | **Vanilla** | **1.521** | **4.58** |
 | NSA | 1.905 | 6.72 |
 | DeltaNet | 2.486 | 12.02 |
+### Saddening Training Results
+![Training Loss](results/train_loss.png)
+
+![Validation Loss](results/val_loss.png)
 
 Vanilla softmax attention achieves the lowest validation loss by a wide margin at this scale. NSA lands in second place, while DeltaNet trails significantly.
+
+![Perplexity vs Cumulative FLOPs](results/cummulative_flops.png)
+
 
 ### Inference Latency (ms / token)
 
@@ -56,7 +64,12 @@ In principle this O($T$) recurrence should beat vanilla attention's O($T^2$) cos
 
 In summary, these alternative mechanisms are architectural investments that amortize over scale — larger models, longer contexts, and bigger datasets. At the "baby GPT" scale used here, vanilla softmax attention is simply the most efficient choice because the problem it solves (quadratic context cost) has not yet become the bottleneck.
 
----
+
+## Future Work 
+In future work I would like to work with bigger datasets like a subset from the Pile and use stronger google colab GPUs to train models in the ranges of 100mn and test how bigger embedding spaces > 768 result in different results.
+
+
+
 
 ## 2. How to Use This Yourself
 
@@ -160,15 +173,12 @@ Each config file under `config/` is a plain Python file with variable assignment
 
 ## Acknowledgements
 
+This project builds on the work of several open-source projects and research papers:
+
+**Code & Infrastructure**
 - [nanoGPT](https://github.com/karpathy/nanoGPT) by Andrej Karpathy — the training infrastructure and vanilla GPT implementation.
-- [flash-linear-attention](https://github.com/sustech-repro/flash-linear-attention) — DeltaNet, Gated Delta Product, and NSA layer implementations.
-- Yang et al., *GATED DELTA NETWORKS
-:
-IMPROVING
-MAMBA
-2 WITH
-DELTA
-RULE
-*, 2025 ICLR
-- 
-- Yuan et al., *"Native Sparse Attention: Hardware-Aligned and Natively Trainable Sparse Attention"*, 2025 — the NSA paper.
+- [flash-linear-attention](https://github.com/sustech-repro/flash-linear-attention) (FLA) — efficient implementations of DeltaNet, Gated Delta Product, and NSA layers.
+
+**Papers**
+- Yang et al., *"Gated Delta Networks: Improving Mamba2 with Delta Rule"*, ICLR 2025 — the DeltaNet and Gated Delta Product mechanisms.
+- Yuan et al., *"Native Sparse Attention: Hardware-Aligned and Natively Trainable Sparse Attention"*, 2025 — the NSA mechanism.
