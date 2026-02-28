@@ -826,7 +826,7 @@ if __name__ == "__main__":
         # "config/train_shkspr_delta_prod.py",   # Delta Product
         "config/train_shkspr_nsa.py",          # Native Sparse Attention
     ]
-    learning_rates = [5e-4, 1e-3, 3e-3]
+    learning_rates = [ 1e-3]
 
     # ---- parse CLI overrides (--key=value) applied on top of every run ----
     extra_overrides = {}
