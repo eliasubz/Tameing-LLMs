@@ -88,7 +88,7 @@ BENCH_MODELS = {
     "vanilla":       dict(n_layer=6, n_head=6, n_embd=384, dropout=0.0, bias=False),
     "delta":         dict(n_layer=6, n_head=6, n_embd=372, dropout=0.0, bias=False),
     "delta_product": dict(n_layer=6, n_head=2, n_embd=228, dropout=0.0, bias=False),
-    "nsa":           dict(n_layer=6, n_head=6, n_embd=384, dropout=0.0, bias=False),
+    "nsa":           dict(n_layer=6, n_head=16, n_embd=384, dropout=0.0, bias=False, num_kv_heads=1, nsa_block_size=64, nsa_block_counts=4, nsa_window_size=256),
 }
 BENCH_VOCAB_SIZE  = 65     # shakespeare_char
 BENCH_BLOCK_SIZE  = 256
@@ -532,6 +532,7 @@ def bench_memory(wandb_log=True, context_lengths=None, batch_size=4):
 
     results = []
     for model_name, spec in BENCH_MODELS.items():
+        
         GPTConfig, GPT = _import_model_module(model_name)
         for ctx_len in context_lengths:
             torch.cuda.empty_cache(); gc.collect()
@@ -875,8 +876,8 @@ if __name__ == "__main__":
     print("  RUNNING BENCHMARKS")
     print("=" * 60 + "\n")
 
-    print(">>> Benchmark: Param-Matching Table (Table 5)")
-    bench_params(wandb_log=use_wandb)
+    # print(">>> Benchmark: Param-Matching Table (Table 5)")
+    # bench_params(wandb_log=use_wandb)
 
     print("\n>>> Benchmark: Memory Wall (Figure 2)")
     bench_memory(wandb_log=use_wandb)
