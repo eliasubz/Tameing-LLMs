@@ -33,7 +33,7 @@ All architectures were tuned to sit within < 3% of each other in total trainable
 
 Vanilla softmax attention achieves the lowest validation loss by a wide margin at this scale. NSA lands in second place, while DeltaNet trails significantly.
 
-![Perplexity vs Cumulative FLOPs](results/cummulative_flops.png)
+![Perplexity vs Cumulative FLOPs](results/cumulative_flops.png)
 
 
 ### Inference Latency (ms / token)

@@ -1,0 +1,18 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu && pip install numpy requests tiktoken
+      - name: Import model & forward pass
+        run: python -c "
+          import torch; from model import GPTConfig, GPT;
+          m = GPT(GPTConfig(block_size=64, vocab_size=65, n_layer=2, n_head=2, n_embd=64, dropout=0.0, bias=False));
+          x = torch.randint(0,65,(2,64)); _, loss, _ = m(x, targets=x);
+          print(f'OK — loss={loss.item():.4f}, params={m.get_num_params():,}')
+          "
