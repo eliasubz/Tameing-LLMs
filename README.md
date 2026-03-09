@@ -19,7 +19,7 @@ All architectures were tuned to sit within < 3% of each other in total trainable
 | Gated Delta Product | 6 | 2 | 228 | 10.685 M |
 | NSA | 6 | 16 | 384 | 10.787 M |
 
-### Final Bake-Off — Validation Loss & Perplexity
+### Validation Loss & Perplexity
 
 | Model | Val Loss | Val Perplexity |
 |---|---|---|
